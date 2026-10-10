@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.env
+*.md
+.vscode
+.*
+agent/
+obli.tools/
+docs/
+uploads/
+SampleReport.pdf
+**/*.bat

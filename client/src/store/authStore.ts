@@ -1,0 +1,221 @@
+import { create } from 'zustand';
+import type { User, UserPermissions, PermissionLevel } from '@oblifield/shared';
+import { authApi, type LoginResult } from '../api/auth.api';
+import { isInObliTools, OBLITOOLS_TOKEN_KEY } from '../api/client';
+import { connectSocket, disconnectSocket } from '../socket/socketClient';
+import { useLiveAlertsStore } from './liveAlertsStore';
+import { setLanguage } from '../i18n';
+import { useTenantStore } from './tenantStore';
+import { useClientStore } from './clientStore';
+import { applyTheme } from '../utils/theme';
+
+function syncPreferencesToStore(user: User) {
+  const prefs = user.preferences;
+  if (prefs) {
+    useLiveAlertsStore.getState().setEnabled(prefs.toastEnabled ?? true);
+    useLiveAlertsStore.getState().setPosition(prefs.toastPosition ?? 'bottom-right');
+    if (prefs.preferredTheme) {
+      applyTheme(prefs.preferredTheme);
+    }
+  }
+  if (user.preferredLanguage) {
+    setLanguage(user.preferredLanguage);
+  }
+}
+
+interface AuthState {
+  user: User | null;
+  permissions: UserPermissions | null;
+  requires2faSetup: boolean;
+  isLoading: boolean;
+  isInitialized: boolean;
+
+  login: (username: string, password: string) => Promise<LoginResult>;
+  logout: () => Promise<void>;
+  checkSession: () => Promise<void>;
+  refreshPermissions: () => Promise<void>;
+
+  // Convenience permission checkers
+  isAdmin: () => boolean;
+  canCreate: () => boolean;
+  canWriteIntervention: (interventionId: number, clientId?: number | null) => boolean;
+  canWriteClient: (clientId: number) => boolean;
+  getInterventionPermission: (interventionId: number, clientId?: number | null) => PermissionLevel | null;
+  getClientPermission: (clientId: number) => PermissionLevel | null;
+}
+
+export const useAuthStore = create<AuthState>((set, get) => ({
+  user: null,
+  permissions: null,
+  requires2faSetup: false,
+  isLoading: false,
+  isInitialized: false,
+
+  login: async (username: string, password: string) => {
+    set({ isLoading: true });
+    try {
+      const result = await authApi.login({ username, password });
+
+      // 2FA required — don't set user yet, return the challenge to caller
+      if (result.requires2fa) {
+        set({ isLoading: false });
+        return result;
+      }
+
+      const user = result.user;
+      // In ObliTools iframe context cookies are blocked by Chrome's cross-site policy.
+      // Store the session token so the API client can send it as X-Auth-Token header.
+      if (isInObliTools && result.sessionToken) {
+        sessionStorage.setItem(OBLITOOLS_TOKEN_KEY, result.sessionToken);
+      }
+      set({ user, isLoading: false });
+      syncPreferencesToStore(user);
+      connectSocket(user.id);
+      useTenantStore.getState().fetchTenants();
+      useLiveAlertsStore.getState().fetchAlerts();
+      // Fetch permissions in the background; failure is non-fatal here.
+      authApi.me()
+        .then(({ permissions, user: fullUser, requires2faSetup, currentTenantId }) => {
+          set({ permissions, requires2faSetup: requires2faSetup ?? false });
+          syncPreferencesToStore(fullUser);
+          if (currentTenantId != null) {
+            useTenantStore.setState({ currentTenantId });
+          }
+          // Reload group collapsed state for this user+tenant context
+          useClientStore.getState().reinitForTenant(fullUser.id, currentTenantId ?? null);
+        })
+        .catch(() => { /* non-critical — permissions will load on next checkSession */ });
+      return result;
+    } catch (err) {
+      set({ isLoading: false });
+      const axiosErr = err as { response?: { data?: { error?: string }; status?: number }; message?: string };
+      const serverMessage = axiosErr?.response?.data?.error;
+      const status = axiosErr?.response?.status;
+      if (status === 429) {
+        throw new Error(serverMessage ?? 'Too many login attempts, please try again later');
+      } else if (status === 401) {
+        throw new Error(serverMessage ?? 'Invalid username or password');
+      } else if (serverMessage) {
+        throw new Error(serverMessage);
+      } else {
+        throw new Error(axiosErr?.message ?? 'Unable to connect to the server');
+      }
+    }
+  },
+
+  logout: async () => {
+    // Fetch Obligate logout URL BEFORE destroying local state,
+    // because state reset triggers ProtectedRoute → navigate('/login') which races with us.
+    let obligateLogoutUrl: string | null = null;
+    try {
+      const res = await fetch('/api/auth/sso-logout-url', { credentials: 'include' });
+      const data = await res.json() as { success: boolean; data: string | null };
+      if (data.success && data.data) obligateLogoutUrl = data.data;
+    } catch { /* ignore */ }
+
+    try {
+      await authApi.logout();
+    } finally {
+      disconnectSocket();
+      sessionStorage.removeItem(OBLITOOLS_TOKEN_KEY);
+      set({ user: null, permissions: null, requires2faSetup: false });
+    }
+
+    // Redirect to Obligate logout to destroy its session too.
+    if (obligateLogoutUrl) {
+      window.location.href = obligateLogoutUrl;
+    }
+  },
+
+  checkSession: async () => {
+    try {
+      const { user, permissions, requires2faSetup, currentTenantId } = await authApi.me();
+      set({ user, permissions, requires2faSetup: requires2faSetup ?? false, isInitialized: true });
+      syncPreferencesToStore(user);
+      connectSocket(user.id, currentTenantId ?? undefined);
+      useTenantStore.getState().fetchTenants();
+      useLiveAlertsStore.getState().fetchAlerts();
+      if (currentTenantId != null) {
+        useTenantStore.setState({ currentTenantId });
+      }
+      // Reload group collapsed state for this user+tenant context
+      useClientStore.getState().reinitForTenant(user.id, currentTenantId ?? null);
+    } catch {
+      // Only clear user if login() hasn't already set one (race condition guard:
+      // App.tsx fires checkSession() on mount; if it resolves AFTER a successful
+      // login() call, the catch must not overwrite the freshly-authenticated user).
+      set((state) =>
+        state.user
+          ? { isInitialized: true }
+          : { user: null, permissions: null, requires2faSetup: false, isInitialized: true }
+      );
+    }
+  },
+
+  refreshPermissions: async () => {
+    try {
+      const permissions = await authApi.getPermissions();
+      set({ permissions });
+    } catch {
+      // Ignore errors
+    }
+  },
+
+  isAdmin: () => get().user?.role === 'admin',
+
+  canCreate: () => {
+    const { user, permissions } = get();
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    return permissions?.canCreate ?? false;
+  },
+
+  canWriteIntervention: (interventionId: number, clientId?: number | null) => {
+    const { user, permissions } = get();
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (!permissions) return false;
+
+    // Check direct intervention permission
+    const interventionPerm = permissions.permissions[`intervention:${interventionId}`];
+    if (interventionPerm === 'rw') return true;
+
+    // Check client permission
+    if (clientId != null) {
+      const clientPerm = permissions.permissions[`client:${clientId}`];
+      if (clientPerm === 'rw') return true;
+    }
+
+    return false;
+  },
+
+  canWriteClient: (clientId: number) => {
+    const { user, permissions } = get();
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    if (!permissions) return false;
+    return permissions.permissions[`client:${clientId}`] === 'rw';
+  },
+
+  getInterventionPermission: (interventionId: number, clientId?: number | null) => {
+    const { user, permissions } = get();
+    if (!user) return null;
+    if (user.role === 'admin') return 'rw';
+    if (!permissions) return null;
+
+    const interventionPerm = permissions.permissions[`intervention:${interventionId}`];
+    const clientPerm = clientId != null ? permissions.permissions[`client:${clientId}`] : null;
+
+    if (interventionPerm === 'rw' || clientPerm === 'rw') return 'rw';
+    if (interventionPerm === 'ro' || clientPerm === 'ro') return 'ro';
+    return null;
+  },
+
+  getClientPermission: (clientId: number) => {
+    const { user, permissions } = get();
+    if (!user) return null;
+    if (user.role === 'admin') return 'rw';
+    if (!permissions) return null;
+    return permissions.permissions[`client:${clientId}`] ?? null;
+  },
+}));

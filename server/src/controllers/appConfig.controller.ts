@@ -1,0 +1,54 @@
+import type { Request, Response, NextFunction } from 'express';
+import { appConfigService } from '../services/appConfig.service';
+import { obligateService } from '../services/obligate.service';
+import { AppError } from '../middleware/errorHandler';
+
+const ALLOWED_KEYS = [
+  'allow_2fa', 'force_2fa', 'otp_smtp_server_id',
+  'obligate_enabled', 'company_name', 'company_logo_path', 'tech_panel_url', 'email_notification_smtp_server_id', 'support_phone',
+  'pdf_color_primary', 'pdf_color_accent_line', 'pdf_color_section_bg',
+  'pdf_color_section_text', 'pdf_color_label', 'pdf_color_value',
+  'pdf_color_footer', 'pdf_color_border',
+] as const;
+
+export const appConfigController = {
+  async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cfg = await appConfigService.getAll();
+      res.json({ success: true, data: cfg });
+    } catch (err) { next(err); }
+  },
+
+  async set(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const key = req.params.key as typeof ALLOWED_KEYS[number];
+      if (!ALLOWED_KEYS.includes(key)) throw new AppError(400, `Unknown config key: ${key}`);
+      const { value } = req.body;
+      if (value === undefined) throw new AppError(400, 'Missing value');
+      await appConfigService.set(key, String(value));
+      res.json({ success: true });
+    } catch (err) { next(err); }
+  },
+
+  // ── Obligate SSO gateway ───────────────────────────────────────────────────
+
+  async getObligateConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const cfg = await appConfigService.getObligateConfig();
+      res.json({ success: true, data: cfg });
+    } catch (err) { next(err); }
+  },
+
+  async setObligateConfig(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const patch: { url?: string | null; apiKey?: string | null; enabled?: boolean } = {};
+      if ('url' in req.body) patch.url = (req.body as { url?: string | null }).url?.trim() || null;
+      if ('apiKey' in req.body) patch.apiKey = (req.body as { apiKey?: string | null }).apiKey?.trim() || null;
+      if ('enabled' in req.body) patch.enabled = !!req.body.enabled;
+      const updated = await appConfigService.patchObligateConfig(patch);
+      obligateService.syncCapabilitySchemas().catch(() => {});
+      obligateService.announceSelfInfo().catch(() => {});
+      res.json({ success: true, data: updated });
+    } catch (err) { next(err); }
+  },
+};

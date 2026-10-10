@@ -1,0 +1,89 @@
+export const INTERVENTION_TYPES = [
+  'installation',
+  'maintenance',
+  'repair',
+  'inspection',
+  'other',
+] as const;
+export type InterventionType = (typeof INTERVENTION_TYPES)[number];
+
+export const INTERVENTION_STATUS = [
+  'pending',
+  'assigned',
+  'in_progress',
+  'paused',
+  'pending_validation',
+  'closed',
+  'issue',
+  'cancelled',
+] as const;
+export type InterventionStatus = (typeof INTERVENTION_STATUS)[number];
+
+export const INTERVENTION_PRIORITY = [
+  'low',
+  'normal',
+  'high',
+  'urgent',
+] as const;
+export type InterventionPriority = (typeof INTERVENTION_PRIORITY)[number];
+
+export const TECHNICIAN_STATUS = [
+  'available',
+  'on_site',
+  'travelling',
+  'offline',
+  'on_break',
+] as const;
+export type TechnicianStatus = (typeof TECHNICIAN_STATUS)[number];
+
+export const TIMELINE_EVENT_TYPES = [
+  'check_in',
+  'check_out',
+  'pause_start',
+  'pause_end',
+  'note',
+  'photo',
+  'status_change',
+  'assignment',
+  'step_validated',
+  'signature',
+] as const;
+export type TimelineEventType = (typeof TIMELINE_EVENT_TYPES)[number];
+
+export const INTERVENTION_TYPE_LABELS: Record<InterventionType, string> = {
+  installation: 'Installation',
+  maintenance: 'Maintenance',
+  repair: 'R\u00e9paration',
+  inspection: 'Inspection',
+  other: 'Autre',
+};
+
+export const INTERVENTION_STATUS_LABELS: Record<InterventionStatus, string> = {
+  pending: 'En attente',
+  assigned: 'Assign\u00e9e',
+  in_progress: 'En cours',
+  paused: 'En pause',
+  pending_validation: 'En validation',
+  closed: 'Cl\u00f4tur\u00e9e',
+  issue: 'Probl\u00e8me',
+  cancelled: 'Annul\u00e9e',
+};
+
+export const INTERVENTION_PRIORITY_LABELS: Record<InterventionPriority, string> = {
+  low: 'Basse',
+  normal: 'Normale',
+  high: 'Haute',
+  urgent: 'Urgente',
+};
+
+export const TECHNICIAN_TYPES = ['electrician', 'it', 'other'] as const;
+export type TechnicianType = (typeof TECHNICIAN_TYPES)[number];
+
+export const TECHNICIAN_TYPE_LABELS: Record<TechnicianType, string> = {
+  electrician: '\u00c9lectricien',
+  it: 'Informatique',
+  other: 'Autre',
+};
+
+export const USER_ROLES = ['admin', 'user'] as const;
+export type UserRole = (typeof USER_ROLES)[number];

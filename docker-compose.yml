@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: oblifield
+      POSTGRES_USER: oblifield
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Expose on LAN so you can run migrations from your PC / pgAdmin.
+    # Remove this if you don't need external access.
+    #ports:
+    #  - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oblifield"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  server:
+    image: meejay/oblifield-server:${OBLIFIELD_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: postgres://oblifield:${DB_PASSWORD:-changeme}@postgres:5432/oblifield
+      SESSION_SECRET: ${SESSION_SECRET:-change-this-in-production}
+      CLIENT_ORIGIN: ${CLIENT_ORIGIN:-http://localhost}
+      # true behind a TLS reverse proxy: Secure session cookie.
+      FORCE_HTTPS: ${FORCE_HTTPS:-false}
+      DEFAULT_ADMIN_USERNAME: ${DEFAULT_ADMIN_USERNAME:-admin}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-admin123}
+    volumes:
+      - uploads_data:/app/uploads
+
+  client:
+    image: meejay/oblifield-client:${OBLIFIELD_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      TECH_PANEL_HOSTNAME: ${TECH_PANEL_HOSTNAME:-techpanel.localhost}
+    ports:
+      - "${LISTEN_PORT:-3000}:80"
+volumes:
+  postgres_data:
+  uploads_data:

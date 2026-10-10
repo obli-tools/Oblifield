@@ -1,0 +1,368 @@
+import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
+import path from 'path';
+import fs from 'fs';
+import { SOCKET_EVENTS } from '@oblifield/shared';
+import { interventionService } from '../services/intervention.service';
+import { timelineService } from '../services/timeline.service';
+import { interventionStepService } from '../services/interventionStep.service';
+import { appConfigService } from '../services/appConfig.service';
+import { signLink, verifyLink } from '../utils/techPanelLink';
+
+const router = Router();
+
+// ── Rate limiter for lookup ─────────────────────────────────────────────────
+const lookupLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 3,
+  message: { success: false, error: 'Trop de tentatives. Reessayez dans une minute.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ── Middleware: resolve intervention by UID + verify HMAC signature ──────────
+async function resolveIntervention(req: Request, res: Response, next: NextFunction) {
+  try {
+    const uid = req.params.uid?.toUpperCase();
+    if (!uid) return res.status(400).json({ success: false, error: 'UID is required' });
+
+    // Verify HMAC signature from query or header
+    const sig = (req.query.sig as string) || (req.headers['x-tech-sig'] as string);
+    const ts = Number(req.query.ts || req.headers['x-tech-ts']);
+    if (!sig || !ts) return res.status(403).json({ success: false, error: 'Lien invalide' });
+    if (!verifyLink(uid, ts, sig)) return res.status(403).json({ success: false, error: 'Lien expire ou invalide' });
+
+    const intervention = await interventionService.getByUid(uid);
+    if (!intervention) return res.status(404).json({ success: false, error: 'Intervention not found' });
+
+    (req as any).intervention = intervention;
+    next();
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+// ── POST /tech-panel/lookup ─────────────────────────────────────────────────
+router.post('/lookup', lookupLimiter, async (req, res) => {
+  try {
+    const { uid } = req.body;
+    if (!uid) {
+      return res.status(400).json({ success: false, error: 'uid is required' });
+    }
+
+    const intervention = await interventionService.getByUid(uid.toUpperCase());
+    if (!intervention) {
+      return res.status(404).json({ success: false, error: 'Intervention not found' });
+    }
+
+    // Generate HMAC signature for this session
+    const ts = Date.now();
+    const sig = signLink(intervention.uid, ts);
+
+    // Get logo URL
+    const logoPath = await appConfigService.get('company_logo_path');
+    let logoUrl: string | null = null;
+    if (logoPath) {
+      const filename = logoPath.split('/').pop();
+      if (filename) logoUrl = `/api/tech-panel/logo`;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        uid: intervention.uid,
+        title: intervention.title,
+        status: intervention.status,
+        clientName: intervention.clientName,
+        siteName: intervention.siteName,
+        logoUrl,
+        sig,
+        ts,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /tech-panel/logo ────────────────────────────────────────────────────
+router.get('/logo', async (_req, res) => {
+  try {
+    const logoPath = await appConfigService.get('company_logo_path');
+    if (!logoPath || !fs.existsSync(logoPath)) {
+      return res.status(404).json({ success: false, error: 'No logo configured' });
+    }
+    res.sendFile(path.resolve(logoPath));
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Photo serving (no auth — filename is opaque, must be before middleware) ──
+router.get('/:uid/photos/:filename', async (req, res) => {
+  try {
+    const filePath = path.resolve('/app/uploads/photos', req.params.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'Photo not found' });
+    }
+    res.sendFile(filePath);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── All routes below require UID + date verification ────────────────────────
+router.use('/:uid', resolveIntervention as any);
+
+// ── GET /tech-panel/:uid/details ────────────────────────────────────────────
+router.get('/:uid/details', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const { photoService } = await import('../services/photo.service');
+    const { signatureService } = await import('../services/signature.service');
+
+    const [steps, photos, signatures, timeline, supportPhone, documents] = await Promise.all([
+      interventionStepService.getByIntervention(intervention.id),
+      photoService.getByIntervention(intervention.id),
+      signatureService.getByIntervention(intervention.id),
+      timelineService.getByIntervention(intervention.id, 100),
+      appConfigService.get('support_phone'),
+      import('../services/interventionDocument.service').then((m) => m.interventionDocumentService.getByIntervention(intervention.id)),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        intervention,
+        steps,
+        photos,
+        signatures,
+        timeline,
+        supportPhone: supportPhone || null,
+        documents,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /tech-panel/:uid/check-in ─────────────────────────────────────────
+router.post('/:uid/check-in', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const { latitude, longitude, accuracy } = req.body;
+
+    await timelineService.create({
+      interventionId: intervention.id,
+      technicianId: intervention.assignedTechnicianId,
+      type: 'check_in',
+      message: null,
+      latitude,
+      longitude,
+      accuracy,
+    });
+
+    const updated = await interventionService.changeStatus(intervention.id, 'in_progress');
+
+    if (intervention.assignedTechnicianId) {
+      const { technicianService } = await import('../services/technician.service');
+      await technicianService.updateStatus(intervention.assignedTechnicianId, 'on_site');
+      await technicianService.update(intervention.assignedTechnicianId, {
+        currentInterventionId: intervention.id,
+      });
+    }
+
+    res.json({ success: true, data: updated });
+
+    // Socket notifications
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`tenant:${intervention.tenantId}`).emit(SOCKET_EVENTS.INTERVENTION_STATUS_CHANGE, { intervention: updated });
+      io.to(`tenant:${intervention.tenantId}`).emit(SOCKET_EVENTS.INTERVENTION_UPDATED, { intervention: updated });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /tech-panel/:uid/check-out ─────────────────────────────────────────
+router.post('/:uid/check-out', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const { latitude, longitude, accuracy, status } = req.body;
+    const finalStatus = status === 'issue' ? 'issue' : 'pending_validation';
+
+    await timelineService.create({
+      interventionId: intervention.id,
+      technicianId: intervention.assignedTechnicianId,
+      type: 'check_out',
+      message: null,
+      latitude,
+      longitude,
+      accuracy,
+    });
+
+    const updated = await interventionService.changeStatus(intervention.id, finalStatus);
+
+    if (intervention.assignedTechnicianId) {
+      const { technicianService } = await import('../services/technician.service');
+      await technicianService.updateStatus(intervention.assignedTechnicianId, 'available');
+      await technicianService.update(intervention.assignedTechnicianId, {
+        currentInterventionId: null,
+      });
+    }
+
+    res.json({ success: true, data: updated });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`tenant:${intervention.tenantId}`).emit(SOCKET_EVENTS.INTERVENTION_STATUS_CHANGE, { intervention: updated });
+      io.to(`tenant:${intervention.tenantId}`).emit(SOCKET_EVENTS.INTERVENTION_UPDATED, { intervention: updated });
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── PUT /tech-panel/:uid/observations ───────────────────────────────────────
+router.put('/:uid/observations', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const { technicianObservations } = req.body;
+
+    const updated = await interventionService.update(intervention.id, { technicianObservations });
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /tech-panel/:uid/photos ────────────────────────────────────────────
+router.post('/:uid/photos', async (req, res) => {
+  try {
+    const { photoUpload } = await import('../middleware/upload');
+    const intervention = (req as any).intervention;
+
+    photoUpload.single('photo')(req, res, async (uploadErr) => {
+      if (uploadErr) return res.status(400).json({ success: false, error: uploadErr.message });
+      if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+
+      const { photoService } = await import('../services/photo.service');
+
+      const event = await timelineService.create({
+        interventionId: intervention.id,
+        type: 'photo',
+        technicianId: intervention.assignedTechnicianId,
+        message: req.file.originalname,
+        photoUrl: `/uploads/photos/${req.file.filename}`,
+      });
+
+      const photo = await photoService.save(req.file, intervention.id, null, event.id);
+      res.status(201).json({ success: true, data: photo });
+
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`tenant:${intervention.tenantId}`).emit(SOCKET_EVENTS.TIMELINE_EVENT_CREATED, {
+          interventionId: intervention.id,
+          event,
+        });
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /tech-panel/:uid/documents/:docId ─────────────────────────────────
+router.get('/:uid/documents/:docId', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    // Verify document is attached to this intervention
+    const { interventionDocumentService } = await import('../services/interventionDocument.service');
+    const docs = await interventionDocumentService.getByIntervention(intervention.id);
+    const docId = Number(req.params.docId);
+    if (!docs.some((d: any) => d.documentId === docId)) {
+      return res.status(403).json({ success: false, error: 'Document not attached to this intervention' });
+    }
+    const { documentService } = await import('../services/document.service');
+    const doc = await documentService.getById(docId);
+    if (!doc) return res.status(404).json({ success: false, error: 'Document not found' });
+    res.json({ success: true, data: doc });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /tech-panel/:uid/signatures ────────────────────────────────────────
+router.post('/:uid/signatures', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const { signatureService } = await import('../services/signature.service');
+    const { type, signatureData, signerName } = req.body;
+
+    if (!type || !signatureData || !signerName) {
+      return res.status(400).json({ success: false, error: 'type, signatureData, and signerName are required' });
+    }
+    if (type !== 'technician' && type !== 'client') {
+      return res.status(400).json({ success: false, error: 'Only technician and client signatures are allowed' });
+    }
+
+    const data = await signatureService.save({
+      interventionId: intervention.id,
+      type,
+      signatureData,
+      signerName,
+      signedByUserId: null,
+      signedByTechnicianId: intervention.assignedTechnicianId,
+    });
+    const typeLabels: Record<string, string> = { technician: 'technicien', client: 'client' };
+    await timelineService.create({ interventionId: intervention.id, technicianId: intervention.assignedTechnicianId, type: 'signature', message: `Signature ${typeLabels[type] || type} : ${signerName}` });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /tech-panel/:uid/steps ──────────────────────────────────────────────
+router.get('/:uid/steps', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const data = await interventionStepService.getByIntervention(intervention.id);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /tech-panel/:uid/steps/:stepId/validate ────────────────────────────
+router.post('/:uid/steps/:stepId/validate', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const techId = intervention.assignedTechnicianId;
+    if (!techId) return res.status(400).json({ success: false, error: 'No technician assigned' });
+
+    const data = await interventionStepService.validateTechnician(Number(req.params.stepId), techId);
+    if (!data) return res.status(404).json({ success: false, error: 'Step not found' });
+    await timelineService.create({ interventionId: intervention.id, technicianId: techId, type: 'step_validated', message: `Etape validee : ${data.label}` });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /tech-panel/:uid/steps/:stepId/unvalidate ──────────────────────────
+router.post('/:uid/steps/:stepId/unvalidate', async (req, res) => {
+  try {
+    const intervention = (req as any).intervention;
+    const data = await interventionStepService.unvalidateTechnician(Number(req.params.stepId));
+    if (!data) return res.status(404).json({ success: false, error: 'Step not found' });
+    await timelineService.create({ interventionId: intervention.id, type: 'step_validated', message: `Etape devalidee : ${data.label}` });
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+export default router;

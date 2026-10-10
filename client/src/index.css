@@ -1,0 +1,308 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Theme CSS custom properties
+   Values are space-separated RGB triplets so Tailwind's opacity modifier syntax
+   (e.g. bg-accent/30) works: Tailwind emits  rgb(var(--c-X) / 0.3)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Obli Operator (default) — Obli design system v1, fond bleu nuit + accent app.
+       Spec : Obli design system. Accent Oblifield = lime
+       (#AEEA00) car Oblifield n'a pas d'accent dans la palette des apps — on conserve
+       l'identité historique mais sur le squelette obli-operator.
+       Tailwind border-XXX classes resolvent en rgb(var(--c-XXX)) sans alpha,
+       donc --c-border doit être une teinte proche du bg, pas du blanc pur. */
+:root,
+[data-theme="obli-operator"] {
+  --c-bg-primary:            11 13 26;
+  --c-bg-secondary:          19 23 40;
+  --c-bg-tertiary:           24 28 48;
+  --c-bg-hover:              29 34 56;
+  --c-bg-active:             34 39 64;
+
+  --c-border:                42 48 72;
+  --c-border-light:          62 70 100;
+
+  --c-text-primary:          240 244 252;
+  --c-text-secondary:        180 188 215;
+  --c-text-muted:            130 140 175;
+
+  /* Statuts intervention — mêmes 6 paires que les autres thèmes pour rester
+     compatibles avec le code existant. Couleurs alignées avec le design system
+     (vert succès / bleu pending / amber attention / muted off). */
+  --c-status-up:             30 221 138;       /* done / closed */
+  --c-status-up-bg:          12 40 26;
+  --c-status-down:           224 58 58;        /* issue */
+  --c-status-down-bg:        46 14 18;
+  --c-status-pending:        79 123 255;       /* pending */
+  --c-status-pending-bg:     16 24 56;
+  --c-status-maintenance:    140 147 182;      /* assigned */
+  --c-status-maintenance-bg: 24 28 48;
+  --c-status-paused:         245 166 35;       /* paused (orange) */
+  --c-status-paused-bg:      40 28 8;
+  --c-status-in-progress:    174 234 0;        /* in_progress — accent lime app */
+  --c-status-in-progress-bg: 30 42 0;
+
+  --c-accent:                174 234 0;
+  --c-accent-hover:          195 242 64;
+  --c-accent-dark:           130 175 0;
+  --c-primary:               174 234 0;
+}
+
+/* ── Obli Dim ─────────────────────────────────────────────────────────────────
+       Pendant sombre d'Obli Daylight dans la suite (Oblifield n'embarque pas
+       Daylight, seulement Dim) : neutres Nord « Polar Night » (ardoise
+       mi-sombre, plus douce que le quasi-noir d'Operator) pour distinguer un
+       second serveur d'un coup d'œil sans passer à un thème clair. C'est un
+       thème SOMBRE pour toute décision clair/sombre (cartes dark_all, classe
+       `dark` sur <html>, contrôles natifs via color-scheme).
+       Dim ne change QUE les neutres : le bloc accent ci-dessous est recopié
+       tel quel depuis Obli Operator (lime Oblifield) et ne doit jamais diverger.
+       Même règle qu'ailleurs : chaque jeton est un triplet RGB simple (sans alpha).
+       Statuts mappés par USAGE (InterventionStatusBadge / TechnicianStatusBadge /
+       bandeaux d'avertissement) :
+         up          = done / closed / available          → vert
+         down        = issue / erreurs / bouton danger     → rouge
+         pending     = pending / on_break / bandeaux d'avertissement (Login,
+                       Settings)                           → ambre (avertissement)
+         maintenance = assigned / travelling               → bleu Nord (info)
+         paused      = cancelled / technicien offline      → gris
+         in-progress = in_progress / on_site               → lime de l'app (accent)
+   ───────────────────────────────────────────────────────────────────────────── */
+[data-theme="obli-dim"] {
+  color-scheme: dark;
+
+  --c-bg-primary:            46 52 64;      /* #2e3440  page */
+  --c-bg-secondary:          59 66 82;      /* #3b4252  cartes / surfaces */
+  --c-bg-tertiary:           67 76 94;      /* #434c5e  champs / conteneurs de pilules */
+  --c-bg-hover:              70 80 99;      /* #465063  survol, un cran au-dessus de tertiary */
+  --c-bg-active:             74 84 104;     /* #4a5468  actif / sélectionné */
+
+  --c-border:                76 86 106;     /* #4c566a */
+  --c-border-light:          94 106 130;    /* #5e6a82 */
+
+  --c-text-primary:          236 239 244;   /* #eceff4 */
+  --c-text-secondary:        216 222 233;   /* #d8dee9 */
+  --c-text-muted:            163 171 188;   /* #a3abbc */
+
+  --c-status-up:             108 203 143;   /* #6ccb8f  done / closed */
+  --c-status-up-bg:          47 74 61;      /* #2f4a3d */
+  --c-status-down:           255 107 107;   /* #ff6b6b  issue */
+  --c-status-down-bg:        83 53 57;      /* #533539 */
+  --c-status-pending:        235 203 139;   /* #ebcb8b  pending / avertissement */
+  --c-status-pending-bg:     75 69 53;      /* #4b4535 */
+  --c-status-maintenance:    136 166 224;   /* #88a6e0  assigned */
+  --c-status-maintenance-bg: 53 66 94;      /* #35425e */
+  --c-status-paused:         138 147 166;   /* #8a93a6  cancelled / offline */
+  --c-status-paused-bg:      54 60 74;      /* #363c4a */
+  --c-status-in-progress:    174 234 0;     /* in_progress — accent lime de l'app */
+  --c-status-in-progress-bg: 58 72 40;      /* #3a4828  teinte lime lisible sur #3b4252 */
+
+  /* ACCENT — recopié TEL QUEL depuis Obli Operator (lime Oblifield #aeea00). */
+  --c-accent:                174 234 0;
+  --c-accent-hover:          195 242 64;
+  --c-accent-dark:           130 175 0;
+  --c-primary:               174 234 0;
+}
+
+/* Obli Dim — chrome : topbar + sidebar un cran PLUS SOMBRE que la page (#282d37).
+   Header.tsx (<header>) et Sidebar.tsx (<aside>) peignent en bg-bg-secondary,
+   le jeton des cartes ; ce sont les seuls <header> / <aside> de l'app. */
+[data-theme="obli-dim"] header.bg-bg-secondary,
+[data-theme="obli-dim"] aside.bg-bg-secondary {
+  background-color: rgb(40 45 55);          /* #282d37 */
+}
+
+/* Obli Dim — bouton plein « danger » (Button.tsx : bg-status-down + text-white).
+   Le rouge de statut #ff6b6b est réglé pour être lu en TEXTE sur l'ardoise ;
+   en fond sous du texte blanc il tombe à 2.8:1. Le remplissage reprend donc le
+   rouge plein de la suite #c83232 (5.3:1) ; le survol hover:bg-red-700 reste. */
+[data-theme="obli-dim"] .bg-status-down.text-white:not(:hover) {
+  background-color: rgb(200 50 50);         /* #c83232 */
+}
+
+/* ── Modern UI (legacy) — conservé pour les utilisateurs ayant choisi ce thème
+       avant l'introduction d'obli-operator. ─────────────────────────────────── */
+[data-theme="modern"] {
+  --c-bg-primary:            13 17 23;
+  --c-bg-secondary:          22 27 34;
+  --c-bg-tertiary:           28 35 51;
+  --c-bg-hover:              33 38 45;
+  --c-bg-active:             40 46 56;
+
+  --c-border:                48 54 61;
+  --c-border-light:          61 68 77;
+
+  --c-text-primary:          230 237 243;
+  --c-text-secondary:        139 148 158;
+  --c-text-muted:            110 118 129;
+
+  /* Intervention statuses */
+  --c-status-up:             46 160 67;       /* done */
+  --c-status-up-bg:          13 40 24;
+  --c-status-down:           248 81 73;       /* issue */
+  --c-status-down-bg:        61 20 24;
+  --c-status-pending:        210 153 34;      /* pending */
+  --c-status-pending-bg:     46 33 17;
+  --c-status-maintenance:    88 166 255;      /* assigned */
+  --c-status-maintenance-bg: 13 37 70;
+  --c-status-paused:         139 148 158;     /* cancelled */
+  --c-status-paused-bg:      28 35 51;
+  --c-status-in-progress:    174 234 0;       /* in_progress — accent lime */
+  --c-status-in-progress-bg: 30 42 0;
+
+  --c-accent:                174 234 0;
+  --c-accent-hover:          195 242 64;
+  --c-accent-dark:           130 175 0;
+  --c-primary:               174 234 0;
+}
+
+/* ── Neon UI — fonds neutres (Obliguard-style) + accent cyan ─────────────── */
+[data-theme="neon"] {
+  --c-bg-primary:            7 8 10;
+  --c-bg-secondary:          13 14 17;
+  --c-bg-tertiary:           19 20 24;
+  --c-bg-hover:              27 27 32;
+  --c-bg-active:             36 36 42;
+
+  --c-border:                50 51 57;
+  --c-border-light:          65 66 73;
+
+  --c-text-primary:          240 234 226;
+  --c-text-secondary:        152 138 118;
+  --c-text-muted:            106 94 78;
+
+  /* Intervention statuses */
+  --c-status-up:             56 189 248;      /* done */
+  --c-status-up-bg:          4 20 32;
+  --c-status-down:           255 56 96;       /* issue */
+  --c-status-down-bg:        42 0 16;
+  --c-status-pending:        255 170 0;       /* pending */
+  --c-status-pending-bg:     32 21 0;
+  --c-status-maintenance:    88 166 255;      /* assigned */
+  --c-status-maintenance-bg: 0 30 46;
+  --c-status-paused:         114 88 52;       /* cancelled */
+  --c-status-paused-bg:      20 13 6;
+  --c-status-in-progress:    174 234 0;       /* in_progress — accent lime */
+  --c-status-in-progress-bg: 24 36 0;
+
+  --c-accent:                174 234 0;
+  --c-accent-hover:          205 245 80;
+  --c-accent-dark:           140 190 0;
+  --c-primary:               174 234 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Utility — hide scrollbar (used by PeekedGrid)
+   ───────────────────────────────────────────────────────────────────────────── */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Base styles
+   ───────────────────────────────────────────────────────────────────────────── */
+@layer base {
+  body {
+    @apply bg-bg-primary text-text-primary antialiased;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-primary;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-border-light;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Neon UI — borders and accent colours only (no blur / glow / shadow)
+   All selectors are flat (not nested) for PostCSS compatibility.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Header bottom accent line ──────────────────────────────────────────────── */
+[data-theme="neon"] header {
+  position: relative;
+  border-bottom-color: transparent;
+}
+[data-theme="neon"] header::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: radial-gradient(
+    ellipse 70% 100% at 50% 100%,
+    rgb(174 234 0 / 0.9) 0%,
+    rgb(174 234 0 / 0.4) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+/* ── Active nav item ────────────────────────────────────────────────────────── */
+[data-theme="neon"] .bg-bg-active {
+  background-color: rgb(174 234 0 / 0.1) !important;
+  box-shadow: inset 3px 0 0 rgb(174 234 0 / 1);
+}
+[data-theme="neon"] .bg-bg-active .text-text-primary {
+  color: rgb(174 234 0 / 1) !important;
+}
+[data-theme="neon"] .bg-bg-active svg {
+  color: rgb(174 234 0 / 1) !important;
+}
+
+/* ── Card status borders — driven by [data-status] attribute ────────────────── */
+[data-theme="neon"] [data-status="done"] {
+  border-color: rgb(56 189 248 / 0.45) !important;
+}
+[data-theme="neon"] [data-status="issue"] {
+  border-color: rgb(255 56 96 / 0.75) !important;
+}
+[data-theme="neon"] [data-status="pending"] {
+  border-color: rgb(255 170 0 / 0.55) !important;
+}
+[data-theme="neon"] [data-status="assigned"] {
+  border-color: rgb(88 166 255 / 0.6) !important;
+}
+[data-theme="neon"] [data-status="in_progress"] {
+  border-color: rgb(174 234 0 / 0.55) !important;
+}
+[data-theme="neon"] [data-status="cancelled"] {
+  border-color: rgb(114 88 52 / 0.5) !important;
+}
+
+/* ── Card secondary bg border ───────────────────────────────────────────────── */
+[data-theme="neon"] .bg-bg-secondary {
+  border-color: rgb(var(--c-border) / 1);
+}
+
+/* ── Neon: remap hard-coded green-* "UP" indicators → blue ──────────────────
+   Components use Tailwind green-* classes for "up" status.  On the neon theme
+   those are overridden here so only the CSS-variable based classes (bg-status-up,
+   text-status-up, etc.) need no change — they already use --c-status-up.       */
+[data-theme="neon"] .text-green-400                { color: rgb(var(--c-status-up)); }
+[data-theme="neon"] .bg-green-500                  { background-color: rgb(var(--c-status-up)); }
+[data-theme="neon"] .border-l-green-500            { border-left-color: rgb(var(--c-status-up)); }
+[data-theme="neon"] .bg-green-500\/10              { background-color: rgb(var(--c-status-up) / 0.10); }
+[data-theme="neon"] .bg-green-500\/20              { background-color: rgb(var(--c-status-up) / 0.20); }
+[data-theme="neon"] .border-green-500\/25          { border-color:      rgb(var(--c-status-up) / 0.25); }
+[data-theme="neon"] .hover\:bg-green-500\/20:hover { background-color: rgb(var(--c-status-up) / 0.20); }
